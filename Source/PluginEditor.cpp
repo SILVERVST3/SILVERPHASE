@@ -229,7 +229,8 @@ void CorrelationDisplay::paint (juce::Graphics& g)
             lines.add ("Sem sinal nesta banda");
             if (b.everActive) lines.add (utf8 ("Mín desde o Limpar: ") + juce::String (b.minCorr, 2));
         }
-        lines.add ("Clique para ouvir esta banda");
+        lines.add (listenMode != 0 ? utf8 ("Clique: ouvir  •  duplo clique: sair")
+                                  : juce::String ("Clique para ouvir esta banda"));
 
         const float bw = 250.0f, bh = 16.0f * (float) lines.size() + 10.0f;
         float bx = hoverPos.x + 14.0f, by = hoverPos.y + 10.0f;
@@ -267,10 +268,19 @@ void CorrelationDisplay::mouseExit (const juce::MouseEvent&)
 
 void CorrelationDisplay::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.getNumberOfClicks() > 1)          // o segundo clique e tratado no mouseDoubleClick
+        return;
+
     const int b = bandAt (e.position.x);
     const auto& bands = proc.analyzer.getBands();
     if (b >= 0 && b < (int) bands.size() && onBandClicked)
         onBandClicked (bands[(size_t) b].fCentre);
+}
+
+void CorrelationDisplay::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (onDoubleClicked)
+        onDoubleClicked();
 }
 
 //==============================================================================
@@ -423,6 +433,16 @@ void GlobalMeter::paint (juce::Graphics& g)
 //==============================================================================
 // ProblemList
 //==============================================================================
+ProblemList::ProblemList (SilverPhaseProcessor& p) : proc (p)
+{
+    viewport.setViewedComponent (&rowsComp, false);
+    viewport.setScrollBarsShown (true, false);       // so rolagem vertical
+    viewport.setScrollBarThickness (10);
+    viewport.getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, navySoft);
+    viewport.getVerticalScrollBar().setColour (juce::ScrollBar::trackColourId, silverDark.withAlpha (0.35f));
+    addAndMakeVisible (viewport);
+}
+
 std::vector<ProblemList::Row> ProblemList::collectRows() const
 {
     std::vector<Row> rows;
@@ -433,8 +453,29 @@ std::vector<ProblemList::Row> ProblemList::collectRows() const
             rows.push_back ({ b.fCentre, b.minCorr, b.active ? b.corr : 1.0f });
 
     std::sort (rows.begin(), rows.end(), [] (const Row& a, const Row& b) { return a.minCorr < b.minCorr; });
-    if ((int) rows.size() > maxRows) rows.resize ((size_t) maxRows);
     return rows;
+}
+
+void ProblemList::resized()
+{
+    viewport.setBounds (getLocalBounds().withTrimmedTop (headerH));
+    updateRowsSize();
+}
+
+void ProblemList::updateRowsSize()
+{
+    const int contentH = (int) rowsComp.rows.size() * rowH;
+    const bool needsScroll = contentH > viewport.getHeight();
+    const int w = viewport.getWidth() - (needsScroll ? viewport.getScrollBarThickness() + 2 : 0);
+    rowsComp.setSize (juce::jmax (1, w), juce::jmax (1, contentH));
+}
+
+void ProblemList::refresh()
+{
+    rowsComp.rows = collectRows();
+    updateRowsSize();
+    rowsComp.repaint();
+    repaint();
 }
 
 void ProblemList::paint (juce::Graphics& g)
@@ -443,32 +484,49 @@ void ProblemList::paint (juce::Graphics& g)
 
     g.setColour (navy);
     g.setFont (font (12.0f, true));
-    g.drawText (utf8 ("FREQUÊNCIAS EM ANTI-FASE"), r.removeFromTop (18.0f), juce::Justification::centredLeft);
+    auto title = r.removeFromTop (18.0f);
+    g.drawText (utf8 ("FREQUÊNCIAS EM ANTI-FASE"), title, juce::Justification::centredLeft);
+    if (! rowsComp.rows.empty())
+    {
+        g.setColour (navySoft);
+        g.drawText (juce::String ((int) rowsComp.rows.size()), title, juce::Justification::centredRight);
+    }
     g.setFont (font (11.0f));
     g.setColour (navySoft);
-    g.drawText (utf8 ("pior valor < limiar  •  clique para ouvir"), r.removeFromTop (16.0f), juce::Justification::centredLeft);
+    g.drawText (utf8 ("clique: ouvir  •  duplo clique: sair"), r.removeFromTop (16.0f), juce::Justification::centredLeft);
     r.removeFromTop ((float) headerH - 34.0f);
 
-    const auto rows = collectRows();
-    if (rows.empty())
+    if (rowsComp.rows.empty())
     {
         g.setColour (navySoft);
         g.setFont (font (12.0f));
         g.drawText (utf8 ("Nenhuma banda abaixo do limiar"), r.removeFromTop (24.0f), juce::Justification::centredLeft);
-        return;
     }
+}
 
-    const float listenHz = readParam (proc, ParamIDs::listenFreq);
-    const bool listening = readParam (proc, ParamIDs::listen) > 0.5f;
+void ProblemList::Rows::paint (juce::Graphics& g)
+{
+    const float listenHz = readParam (owner.proc, ParamIDs::listenFreq);
+    const bool listening = readParam (owner.proc, ParamIDs::listen) > 0.5f;
 
-    for (const auto& row : rows)
+    // desenha so as linhas visiveis
+    const auto clip = g.getClipBounds();
+    const int first = juce::jmax (0, clip.getY() / rowH);
+    const int last  = juce::jmin ((int) rows.size() - 1, clip.getBottom() / rowH);
+
+    for (int i = first; i <= last; ++i)
     {
-        auto line = r.removeFromTop ((float) rowH).reduced (0.0f, 1.5f);
-        if (line.getHeight() < 6.0f) break;
+        const auto& row = rows[(size_t) i];
+        auto line = juce::Rectangle<float> (0.0f, (float) (i * rowH), (float) getWidth(), (float) rowH).reduced (0.0f, 1.5f);
 
         const bool sel = listening && std::abs (std::log (row.freq / listenHz)) < 0.02f;
         g.setColour (sel ? buttonOn.withAlpha (0.18f) : juce::Colours::white.withAlpha (0.45f));
         g.fillRoundedRectangle (line, 4.0f);
+        if (sel)
+        {
+            g.setColour (buttonOn.withAlpha (0.6f));
+            g.drawRoundedRectangle (line.reduced (0.5f), 4.0f, 1.0f);
+        }
 
         auto txt = line.reduced (6.0f, 0.0f);
         g.setColour (navy);
@@ -487,12 +545,20 @@ void ProblemList::paint (juce::Graphics& g)
     }
 }
 
-void ProblemList::mouseDown (const juce::MouseEvent& e)
+void ProblemList::Rows::mouseDown (const juce::MouseEvent& e)
 {
-    const int idx = (int) ((e.position.y - (float) headerH) / (float) rowH);
-    const auto rows = collectRows();
-    if (idx >= 0 && idx < (int) rows.size() && onSelect)
-        onSelect (rows[(size_t) idx].freq);
+    if (e.getNumberOfClicks() > 1)          // o segundo clique e tratado no mouseDoubleClick
+        return;
+
+    const int idx = rowAt (e.position.y);
+    if (idx >= 0 && idx < (int) rows.size() && owner.onSelect)
+        owner.onSelect (rows[(size_t) idx].freq);
+}
+
+void ProblemList::Rows::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (owner.onDeselect)
+        owner.onDeselect();
 }
 
 //==============================================================================
@@ -511,6 +577,8 @@ SilverPhaseEditor::SilverPhaseEditor (SilverPhaseProcessor& p)
 
     corrDisplay.onBandClicked = [this] (float hz) { selectListenFrequency (hz); };
     problemList.onSelect      = [this] (float hz) { selectListenFrequency (hz); };
+    corrDisplay.onDoubleClicked = [this] { stopListening(); };
+    problemList.onDeselect      = [this] { stopListening(); };
 
     setupLabel (resLabel,    utf8 ("Resolução"));
     setupLabel (respLabel,   "Resposta");
@@ -599,6 +667,16 @@ void SilverPhaseEditor::selectListenFrequency (float hz)
         }
 }
 
+void SilverPhaseEditor::stopListening()
+{
+    if (auto* lp = proc.apvts.getParameter (ParamIDs::listen))
+    {
+        lp->beginChangeGesture();
+        lp->setValueNotifyingHost (0.0f);   // "Desligado"
+        lp->endChangeGesture();
+    }
+}
+
 void SilverPhaseEditor::timerCallback()
 {
     auto& an = proc.analyzer;
@@ -610,14 +688,15 @@ void SilverPhaseEditor::timerCallback()
     const int listenMode = (int) readParam (proc, ParamIDs::listen);
     const juce::String bandText = listenMode == 0
         ? utf8 ("Clique numa banda do gráfico para ouvi-la")
-        : utf8 ("Ouvindo: ") + FreqAxis::format (readParam (proc, ParamIDs::listenFreq));
+        : utf8 ("Ouvindo: ") + FreqAxis::format (readParam (proc, ParamIDs::listenFreq))
+              + utf8 ("  (duplo clique para sair)");
     if (bandLabel.getText() != bandText)
         bandLabel.setText (bandText, juce::dontSendNotification);
 
     corrDisplay.repaint();
     specDisplay.repaint();
     globalMeter.repaint();
-    problemList.repaint();
+    problemList.refresh();
 }
 
 void SilverPhaseEditor::paint (juce::Graphics& g)

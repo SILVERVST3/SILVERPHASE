@@ -38,8 +38,10 @@ public:
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     std::function<void (float)> onBandClicked;
+    std::function<void()>       onDoubleClicked;
 
 private:
     juce::Rectangle<float> getPlot() const;
@@ -74,21 +76,42 @@ private:
 };
 
 //==============================================================================
+// Lista de frequencias em anti-fase (com barra de rolagem)
 class ProblemList : public juce::Component
 {
 public:
-    explicit ProblemList (SilverPhaseProcessor& p) : proc (p) {}
-    void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
+    explicit ProblemList (SilverPhaseProcessor& p);
 
-    std::function<void (float)> onSelect;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void refresh();                                  // chamado pelo timer do editor
+
+    std::function<void (float)> onSelect;            // clique: ouvir a banda
+    std::function<void()>       onDeselect;          // duplo clique: sair da escuta
+
+    static constexpr int headerH = 40, rowH = 22;
 
 private:
     struct Row { float freq; float minCorr; float corr; };
+
+    struct Rows : public juce::Component
+    {
+        explicit Rows (ProblemList& o) : owner (o) {}
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+        int rowAt (float y) const { return (int) (y / (float) rowH); }
+
+        ProblemList& owner;
+        std::vector<Row> rows;
+    };
+
     std::vector<Row> collectRows() const;
-    static constexpr int headerH = 40, rowH = 22, maxRows = 12;
+    void updateRowsSize();
 
     SilverPhaseProcessor& proc;
+    juce::Viewport viewport;
+    Rows rowsComp { *this };
 };
 
 //==============================================================================
@@ -104,6 +127,7 @@ public:
 private:
     void timerCallback() override;
     void selectListenFrequency (float hz);
+    void stopListening();
     void setupLabel (juce::Label&, const juce::String&);
 
     SilverPhaseProcessor& proc;
