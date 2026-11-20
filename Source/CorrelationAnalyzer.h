@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <atomic>
 #include <vector>
+#include "BandLayout.h"
 
 /*  Analisador de correlacao estereo por bandas.
 

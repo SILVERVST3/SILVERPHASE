@@ -119,23 +119,15 @@ void CorrelationAnalyzer::rebuildBands()
     globalCorr = globalMin = 1.0f;
     globalActive = globalEverActive = false;
 
-    const double binHz   = currentSampleRate / fftSize;
-    const double nyquist = currentSampleRate * 0.5;
-    const double topF    = std::min (20000.0, nyquist * 0.95);
-    const int    bpo     = builtBandsPerOctave;
-    const double halfStep = std::pow (2.0, 1.0 / (2.0 * bpo));
+    const double binHz = currentSampleRate / fftSize;
 
-    // centros referenciados a 1 kHz (padrao ISO para 1/3 de oitava)
-    const int nMin = (int) std::ceil  (bpo * std::log2 (20.0 / 1000.0));
-    const int nMax = (int) std::floor (bpo * std::log2 (topF / 1000.0));
-
-    for (int n = nMin; n <= nMax; ++n)
+    for (const auto& e : makeBandLayout (currentSampleRate, builtBandsPerOctave))
     {
         BandData b;
-        const double fc = 1000.0 * std::pow (2.0, (double) n / bpo);
-        b.fCentre = (float) fc;
-        b.fLo     = (float) (fc / halfStep);
-        b.fHi     = (float) std::min (fc * halfStep, nyquist);
+        const double fc = e.fCentre;
+        b.fCentre = e.fCentre;
+        b.fLo     = e.fLo;
+        b.fHi     = e.fHi;
 
         b.binLo = (int) std::ceil  (b.fLo / binHz);
         b.binHi = (int) std::floor (b.fHi / binHz);

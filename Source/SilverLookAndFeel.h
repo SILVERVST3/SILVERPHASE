@@ -82,6 +82,44 @@ public:
         g.drawRoundedRectangle (r, 5.0f, 1.0f);
     }
 
+    void drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float pos,
+                           float startAngle, float endAngle, juce::Slider& slider) override
+    {
+        using namespace SilverColours;
+        const auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (4.0f);
+        const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
+        const auto centre = bounds.getCentre();
+        const float angle = startAngle + pos * (endAngle - startAngle);
+        const float alpha = slider.isEnabled() ? 1.0f : 0.45f;
+
+        // trilho e arco do valor
+        juce::Path track, value;
+        const float arcR = radius - 2.0f;
+        track.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
+        value.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, startAngle, angle, true);
+        g.setColour (silverDark.withAlpha (0.55f * alpha));
+        g.strokePath (track, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (navySoft.withAlpha (alpha));
+        g.strokePath (value, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // corpo prata
+        const float kr = radius - 8.0f;
+        auto knob = juce::Rectangle<float> (kr * 2.0f, kr * 2.0f).withCentre (centre);
+        g.setColour (juce::Colours::black.withAlpha (0.18f));
+        g.fillEllipse (knob.translated (0.0f, 2.0f));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xfffdfdfe), knob.getX(), knob.getY(),
+                                                 silverDark, knob.getRight(), knob.getBottom(), false));
+        g.fillEllipse (knob);
+        g.setColour (silverDark.darker (0.2f));
+        g.drawEllipse (knob, 1.0f);
+
+        // ponteiro
+        juce::Path ptr;
+        ptr.addRoundedRectangle (-1.5f, -kr + 3.0f, 3.0f, kr * 0.55f, 1.5f);
+        g.setColour (navy.withAlpha (alpha));
+        g.fillPath (ptr, juce::AffineTransform::rotation (angle).translated (centre.x, centre.y));
+    }
+
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override
     {
         return juce::Font (juce::FontOptions (juce::jmin (14.0f, (float) buttonHeight * 0.5f), juce::Font::bold));

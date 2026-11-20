@@ -65,6 +65,18 @@ private:
 };
 
 //==============================================================================
+// Faixa que mostra a correcao aplicada por banda
+class CorrectionStrip : public juce::Component
+{
+public:
+    explicit CorrectionStrip (SilverPhaseProcessor& p) : proc (p) {}
+    void paint (juce::Graphics&) override;
+
+private:
+    SilverPhaseProcessor& proc;
+};
+
+//==============================================================================
 class GlobalMeter : public juce::Component
 {
 public:
@@ -133,19 +145,32 @@ private:
     SilverPhaseProcessor& proc;
     SilverLookAndFeel lnf;
 
+    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ComboAtt  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
     CorrelationDisplay corrDisplay;
     SpectrumDisplay    specDisplay;
     GlobalMeter        globalMeter;
     ProblemList        problemList;
+    CorrectionStrip    corrStrip;
+
+    // ---- secao de correcao ----
+    juce::TextButton corrButton, bassMonoButton, deltaButton;
+    juce::ComboBox corrModeBox;
+    juce::Label corrModeLabel, latencyLabel;
+    juce::Slider targetKnob, strengthKnob, maxRotKnob, maxSideKnob, speedKnob, bassFreqKnob;
+    juce::Label  targetLbl, strengthLbl, maxRotLbl, maxSideLbl, speedLbl, bassFreqLbl;
+    std::unique_ptr<ButtonAtt> corrAtt, bassMonoAtt, deltaAtt;
+    std::unique_ptr<ComboAtt>  corrModeAtt;
+    std::unique_ptr<SliderAtt> targetAtt, strengthAtt, maxRotAtt, maxSideAtt, speedAtt, bassFreqAtt;
+    juce::Rectangle<int> corrPanel;
 
     juce::Label resLabel, respLabel, threshLabel, listenLabel, bandLabel;
     juce::ComboBox resolutionBox, listenBox;
     juce::Slider responseSlider, thresholdSlider;
     juce::TextButton freezeButton, clearButton, monoButton;
 
-    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using ComboAtt  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
-    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<ComboAtt>  resolutionAtt, listenAtt;
     std::unique_ptr<SliderAtt> responseAtt, thresholdAtt;

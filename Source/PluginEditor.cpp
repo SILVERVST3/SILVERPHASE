@@ -101,7 +101,8 @@ void CorrelationDisplay::paint (juce::Graphics& g)
     // titulo
     g.setColour (gridText);
     g.setFont (font (12.0f, true));
-    g.drawText (utf8 ("CORRELAÇÃO POR BANDA  (L × R)"), bounds.withHeight (26.0f).withTrimmedLeft (14.0f),
+    g.drawText (proc.isCorrectionActive() ? utf8 ("CORRELAÇÃO POR BANDA   barra: depois  •  contorno: antes")
+                                          : utf8 ("CORRELAÇÃO POR BANDA  (L × R)"), bounds.withHeight (26.0f).withTrimmedLeft (14.0f),
                 juce::Justification::centredLeft);
 
     // zona de anti-fase
@@ -149,7 +150,10 @@ void CorrelationDisplay::paint (juce::Graphics& g)
                 juce::Justification::centredLeft);
 
     const auto& bands = proc.analyzer.getBands();
+    const auto& outBands = proc.analyzerOut.getBands();
+    const bool showAfter = proc.isCorrectionActive() && outBands.size() == bands.size();
     const int listenBand = listenMode != 0 ? nearestBand (bands, listenHz) : -1;
+
 
     // barras
     for (int i = 0; i < (int) bands.size(); ++i)
@@ -167,20 +171,30 @@ void CorrelationDisplay::paint (juce::Graphics& g)
             g.fillRect (juce::Rectangle<float> (x1 - 1.0f, plot.getY(), w + 2.0f, plot.getHeight()));
         }
 
-        if (! b.active)
+        const auto& shown = showAfter ? outBands[(size_t) i] : b;
+
+        if (! shown.active)
         {
             g.setColour (gridText.withAlpha (0.25f));
             g.fillRect (juce::Rectangle<float> (x1, y0 - 1.0f, w, 2.0f));
         }
         else
         {
-            const float y = yFor (b.corr, plot);
-            const auto col = forCorrelation (b.corr);
+            const float y = yFor (shown.corr, plot);
+            const auto col = forCorrelation (shown.corr);
             auto bar = juce::Rectangle<float>::leftTopRightBottom (x1, std::min (y, y0), x2, std::max (y, y0));
             if (bar.getHeight() < 2.0f) bar = bar.withSizeKeepingCentre (w, 2.0f);
 
             g.setGradientFill (juce::ColourGradient (col.brighter (0.3f), x1, bar.getY(), col.darker (0.35f), x1, bar.getBottom(), false));
             g.fillRect (bar);
+        }
+
+        if (showAfter && b.active)       // contorno: como estava antes da correcao
+        {
+            const float yIn = yFor (b.corr, plot);
+            auto ghost = juce::Rectangle<float>::leftTopRightBottom (x1, std::min (yIn, y0), x2, std::max (yIn, y0));
+            g.setColour (juce::Colours::white.withAlpha (0.65f));
+            g.drawRect (ghost, 1.0f);
         }
 
         if (b.everActive && b.minCorr < 0.999f)
@@ -223,6 +237,15 @@ void CorrelationDisplay::paint (juce::Graphics& g)
             lines.add (utf8 ("Correlação: ") + juce::String (b.corr, 2) + utf8 ("    Mín: ") + juce::String (b.minCorr, 2));
             lines.add ("Mid: " + juce::String (b.midDb, 1) + " dB    Side: " + juce::String (b.sideDb, 1) + " dB");
             lines.add ("Perda em mono: " + juce::String (b.monoLossDb, 1) + " dB");
+
+            if (showAfter)
+            {
+                const auto& o = outBands[(size_t) hoverBand];
+                lines.add (utf8 ("Antes ") + juce::String (b.corr, 2) + utf8 ("  →  depois ") + juce::String (o.corr, 2));
+                if (hoverBand < proc.corrector.meterNumBands.load())
+                    lines.add (utf8 ("Correção: fase ") + juce::String (juce::roundToInt (proc.corrector.meterRotationDeg[(size_t) hoverBand].load()))
+                               + utf8 ("°   Side ") + juce::String (proc.corrector.meterSideDb[(size_t) hoverBand].load(), 1) + " dB");
+            }
         }
         else
         {
@@ -232,7 +255,7 @@ void CorrelationDisplay::paint (juce::Graphics& g)
         lines.add (listenMode != 0 ? utf8 ("Clique: ouvir  •  duplo clique: sair")
                                   : juce::String ("Clique para ouvir esta banda"));
 
-        const float bw = 250.0f, bh = 16.0f * (float) lines.size() + 10.0f;
+        const float bw = 270.0f, bh = 16.0f * (float) lines.size() + 10.0f;
         float bx = hoverPos.x + 14.0f, by = hoverPos.y + 10.0f;
         if (bx + bw > bounds.getRight() - 4.0f) bx = hoverPos.x - bw - 10.0f;
         if (by + bh > bounds.getBottom() - 4.0f) by = bounds.getBottom() - bh - 4.0f;
@@ -304,7 +327,8 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 
     g.setColour (gridText);
     g.setFont (font (12.0f, true));
-    g.drawText ("ESPECTRO MID x SIDE", bounds.withHeight (24.0f).withTrimmedLeft (14.0f), juce::Justification::centredLeft);
+    g.drawText (proc.isCorrectionActive() ? utf8 ("ESPECTRO MID x SIDE  (depois; Side antes em linha fraca)")
+                                          : juce::String ("ESPECTRO MID x SIDE"), bounds.withHeight (24.0f).withTrimmedLeft (14.0f), juce::Justification::centredLeft);
 
     // legenda
     {
@@ -332,8 +356,27 @@ void SpectrumDisplay::paint (juce::Graphics& g)
     }
     FreqAxis::drawFreqGrid (g, plot, true);
 
-    const auto& bands = proc.analyzer.getBands();
+    const auto& inBands  = proc.analyzer.getBands();
+    const auto& outBands = proc.analyzerOut.getBands();
+    const bool showAfter = proc.isCorrectionActive() && outBands.size() == inBands.size();
+    const auto& bands = showAfter ? outBands : inBands;
     if (bands.empty()) return;
+
+    if (showAfter)      // Side antes da correcao (linha fraca)
+    {
+        juce::Path before;
+        bool st = false;
+        for (const auto& b : inBands)
+        {
+            const float x = FreqAxis::toX (b.fCentre, plot), y = yFor (b.active ? b.sideDb : dbBottom);
+            if (! st) { before.startNewSubPath (x, y); st = true; } else before.lineTo (x, y);
+        }
+        g.saveState();
+        g.reduceClipRegion (plot.toNearestInt());
+        g.setColour (sideOrange.withAlpha (0.35f));
+        g.strokePath (before, juce::PathStrokeType (1.2f, juce::PathStrokeType::curved));
+        g.restoreState();
+    }
 
     // preenchimento vermelho onde Side > Mid
     for (const auto& b : bands)
@@ -365,12 +408,92 @@ void SpectrumDisplay::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+// CorrectionStrip
+//==============================================================================
+void CorrectionStrip::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    drawScreen (g, bounds);
+
+    const juce::Rectangle<float> plot (bounds.getX() + FreqAxis::leftMargin, bounds.getY() + 22.0f,
+                                       bounds.getWidth() - FreqAxis::leftMargin - FreqAxis::rightMargin,
+                                       bounds.getHeight() - 22.0f - 6.0f);
+    const float yMid = plot.getCentreY();
+
+    g.setColour (gridText);
+    g.setFont (font (12.0f, true));
+    g.drawText (utf8 ("CORREÇÃO APLICADA"), bounds.withHeight (22.0f).withTrimmedLeft (14.0f), juce::Justification::centredLeft);
+
+    {
+        auto leg = bounds.withHeight (22.0f).withTrimmedRight (16.0f);
+        g.setFont (font (11.0f, true));
+        auto item = [&] (juce::Colour c, const juce::String& text, float w)
+        {
+            auto rr = leg.removeFromRight (w);
+            g.setColour (c);
+            g.fillRect (juce::Rectangle<float> (rr.getX(), rr.getCentreY() - 4.0f, 12.0f, 8.0f));
+            g.setColour (gridText);
+            g.drawText (text, rr.withTrimmedLeft (17.0f), juce::Justification::centredLeft);
+            leg.removeFromRight (10.0f);
+        };
+        item (sideOrange, utf8 ("redução de Side (até 12 dB)"), 180.0f);
+        item (midBlue,    utf8 ("rotação de fase (até 180°)"),  176.0f);
+    }
+
+    g.setColour (gridLine);
+    g.drawHorizontalLine (juce::roundToInt (yMid), plot.getX(), plot.getRight());
+    g.setFont (font (10.0f));
+    g.setColour (gridText);
+    g.drawText ("fase", juce::Rectangle<float> (bounds.getX() + 4.0f, plot.getY(), FreqAxis::leftMargin - 10.0f, 12.0f),
+                juce::Justification::centredRight);
+    g.drawText ("side", juce::Rectangle<float> (bounds.getX() + 4.0f, plot.getBottom() - 12.0f, FreqAxis::leftMargin - 10.0f, 12.0f),
+                juce::Justification::centredRight);
+
+    if (! proc.isCorrectionActive())
+    {
+        g.setColour (gridText.withAlpha (0.8f));
+        g.setFont (font (12.0f));
+        g.drawText (utf8 ("Correção desligada  —  ligue em CORREÇÃO, no painel abaixo"), plot, juce::Justification::centred);
+        return;
+    }
+
+    const auto& bands = proc.analyzer.getBands();
+    const int n = juce::jmin ((int) bands.size(), proc.corrector.meterNumBands.load());
+    const float half = plot.getHeight() * 0.5f - 1.0f;
+
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& b = bands[(size_t) i];
+        const float x1 = FreqAxis::toX (b.fLo, plot) + 1.0f, x2 = FreqAxis::toX (b.fHi, plot) - 1.0f;
+        if (x2 <= x1) continue;
+
+        const float rot  = std::abs (proc.corrector.meterRotationDeg[(size_t) i].load());
+        const float side = std::abs (proc.corrector.meterSideDb[(size_t) i].load());
+
+        if (rot > 0.5f)
+        {
+            const float h = juce::jmin (1.0f, rot / 180.0f) * half;
+            g.setColour (midBlue);
+            g.fillRect (juce::Rectangle<float> (x1, yMid - h, x2 - x1, h));
+        }
+        if (side > 0.05f)
+        {
+            const float h = juce::jmin (1.0f, side / 12.0f) * half;
+            g.setColour (sideOrange);
+            g.fillRect (juce::Rectangle<float> (x1, yMid + 1.0f, x2 - x1, h));
+        }
+    }
+}
+
+//==============================================================================
 // GlobalMeter
 //==============================================================================
 void GlobalMeter::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
     const auto& an = proc.analyzer;
+    const bool after = proc.isCorrectionActive();
+    const auto& shown = after ? proc.analyzerOut : proc.analyzer;
 
     g.setColour (navy);
     g.setFont (font (12.0f, true));
@@ -396,8 +519,17 @@ void GlobalMeter::paint (juce::Graphics& g)
         g.fillRect (juce::Rectangle<float> (xm - 1.5f, bar.getY() - 3.0f, 3.0f, bar.getHeight() + 6.0f));
     }
 
+    if (after && an.isGlobalActive())     // ponteiro vazado = antes da correcao
     {
-        const float xc = xFor (an.getGlobalCorrelation());
+        const float xi = xFor (an.getGlobalCorrelation());
+        juce::Path tri;
+        tri.addTriangle (xi - 5.0f, bar.getBottom() + 6.0f, xi + 5.0f, bar.getBottom() + 6.0f, xi, bar.getBottom() - 1.0f);
+        g.setColour (navySoft);
+        g.strokePath (tri, juce::PathStrokeType (1.2f));
+    }
+
+    {
+        const float xc = xFor (shown.getGlobalCorrelation());
         juce::Path tri;
         tri.addTriangle (xc - 6.0f, bar.getBottom() + 7.0f, xc + 6.0f, bar.getBottom() + 7.0f, xc, bar.getBottom() - 2.0f);
         g.setColour (navy);
@@ -419,14 +551,19 @@ void GlobalMeter::paint (juce::Graphics& g)
     g.setColour (navy);
     auto row = r.removeFromTop (18.0f);
     const auto sign = [] (float v) { return (v >= 0.0f ? "+" : "") + juce::String (v, 2); };
-    g.drawText ("Atual: " + (an.isGlobalActive() ? sign (an.getGlobalCorrelation()) : juce::String ("--")),
-                row, juce::Justification::centredLeft);
+    if (after)
+        g.drawText (utf8 ("Antes ") + (an.isGlobalActive() ? sign (an.getGlobalCorrelation()) : juce::String ("--"))
+                    + utf8 (" → ") + (shown.isGlobalActive() ? sign (shown.getGlobalCorrelation()) : juce::String ("--")),
+                    row, juce::Justification::centredLeft);
+    else
+        g.drawText ("Atual: " + (an.isGlobalActive() ? sign (an.getGlobalCorrelation()) : juce::String ("--")),
+                    row, juce::Justification::centredLeft);
     g.setColour (orange.darker (0.4f));
     g.drawText (utf8 ("Mín: ") + sign (an.getGlobalMinimum()), row, juce::Justification::centredRight);
 
     g.setFont (font (12.0f));
     g.setColour (navy);
-    g.drawText ("Perda em mono: " + juce::String (an.getGlobalMonoLossDb(), 1) + " dB",
+    g.drawText ("Perda em mono: " + juce::String (shown.getGlobalMonoLossDb(), 1) + " dB" + (after ? juce::String (" (depois)") : juce::String()),
                 r.removeFromTop (18.0f), juce::Justification::centredLeft);
 }
 
@@ -566,7 +703,7 @@ void ProblemList::Rows::mouseDoubleClick (const juce::MouseEvent&)
 //==============================================================================
 SilverPhaseEditor::SilverPhaseEditor (SilverPhaseProcessor& p)
     : AudioProcessorEditor (&p), proc (p),
-      corrDisplay (p), specDisplay (p), globalMeter (p), problemList (p)
+      corrDisplay (p), specDisplay (p), globalMeter (p), problemList (p), corrStrip (p)
 {
     setLookAndFeel (&lnf);
 
@@ -574,6 +711,7 @@ SilverPhaseEditor::SilverPhaseEditor (SilverPhaseProcessor& p)
     addAndMakeVisible (specDisplay);
     addAndMakeVisible (globalMeter);
     addAndMakeVisible (problemList);
+    addAndMakeVisible (corrStrip);
 
     corrDisplay.onBandClicked = [this] (float hz) { selectListenFrequency (hz); };
     problemList.onSelect      = [this] (float hz) { selectListenFrequency (hz); };
@@ -627,9 +765,72 @@ SilverPhaseEditor::SilverPhaseEditor (SilverPhaseProcessor& p)
     responseSlider.updateText();
     thresholdSlider.updateText();
 
+    // ---------------- secao de correcao ----------------
+    corrButton.setButtonText (utf8 ("CORREÇÃO"));
+    corrButton.setClickingTogglesState (true);
+    bassMonoButton.setButtonText ("Mono grave");
+    bassMonoButton.setClickingTogglesState (true);
+    deltaButton.setButtonText ("Delta");
+    deltaButton.setClickingTogglesState (true);
+    deltaButton.setTooltip ("Ouvir apenas o que a correcao esta removendo");
+    for (auto* b : { &corrButton, &bassMonoButton, &deltaButton })
+        addAndMakeVisible (*b);
+
+    setupLabel (corrModeLabel, "Modo");
+    corrModeBox.addItemList ({ "Auto", utf8 ("Só fase"), utf8 ("Só Side") }, 1);
+    addAndMakeVisible (corrModeBox);
+
+    setupLabel (latencyLabel, "");
+    latencyLabel.setFont (font (11.0f));
+    latencyLabel.setColour (juce::Label::textColourId, navySoft);
+
+    struct KnobDef { juce::Slider* k; juce::Label* l; const char* text; };
+    const KnobDef knobs[] = {
+        { &targetKnob,   &targetLbl,   "Alvo" },
+        { &strengthKnob, &strengthLbl, "Intensidade" },
+        { &maxRotKnob,   &maxRotLbl,   "Rotação máx" },
+        { &maxSideKnob,  &maxSideLbl,  "Side máx" },
+        { &speedKnob,    &speedLbl,    "Velocidade" },
+        { &bassFreqKnob, &bassFreqLbl, "Mono abaixo de" } };
+    for (const auto& kd : knobs)
+    {
+        kd.k->setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        kd.k->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 72, 18);
+        kd.k->setColour (juce::Slider::textBoxTextColourId,       navy);
+        kd.k->setColour (juce::Slider::textBoxBackgroundColourId, field);
+        kd.k->setColour (juce::Slider::textBoxOutlineColourId,    silverDark);
+        addAndMakeVisible (*kd.k);
+        setupLabel (*kd.l, utf8 (kd.text));
+        kd.l->setJustificationType (juce::Justification::centred);
+    }
+
+    corrAtt     = std::make_unique<ButtonAtt> (s, ParamIDs::corrOn,       corrButton);
+    bassMonoAtt = std::make_unique<ButtonAtt> (s, ParamIDs::corrBassMono, bassMonoButton);
+    deltaAtt    = std::make_unique<ButtonAtt> (s, ParamIDs::corrDelta,    deltaButton);
+    corrModeAtt = std::make_unique<ComboAtt>  (s, ParamIDs::corrMode,     corrModeBox);
+    targetAtt   = std::make_unique<SliderAtt> (s, ParamIDs::corrTarget,   targetKnob);
+    strengthAtt = std::make_unique<SliderAtt> (s, ParamIDs::corrStrength, strengthKnob);
+    maxRotAtt   = std::make_unique<SliderAtt> (s, ParamIDs::corrMaxRot,   maxRotKnob);
+    maxSideAtt  = std::make_unique<SliderAtt> (s, ParamIDs::corrMaxSide,  maxSideKnob);
+    speedAtt    = std::make_unique<SliderAtt> (s, ParamIDs::corrSpeed,    speedKnob);
+    bassFreqAtt = std::make_unique<SliderAtt> (s, ParamIDs::corrBassFreq, bassFreqKnob);
+
+    auto num = [] (const juce::String& t) { return t.getDoubleValue(); };
+    targetKnob.textFromValueFunction   = [] (double v) { return (v >= 0.0 ? "+" : "") + juce::String (v, 2); };
+    strengthKnob.textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v)) + " %"; };
+    maxRotKnob.textFromValueFunction   = [] (double v) { return juce::String (juce::roundToInt (v)) + juce::String::fromUTF8 ("°"); };
+    maxSideKnob.textFromValueFunction  = [] (double v) { return juce::String (v, 1) + " dB"; };
+    speedKnob.textFromValueFunction    = [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; };
+    bassFreqKnob.textFromValueFunction = [] (double v) { return juce::String (juce::roundToInt (v)) + " Hz"; };
+    for (auto* k : { &targetKnob, &strengthKnob, &maxRotKnob, &maxSideKnob, &speedKnob, &bassFreqKnob })
+    {
+        k->valueFromTextFunction = num;
+        k->updateText();
+    }
+
     setResizable (true, true);
-    setResizeLimits (900, 580, 1800, 1100);
-    setSize (1080, 680);
+    setResizeLimits (1040, 760, 1900, 1300);
+    setSize (1180, 860);
 
     startTimerHz (30);
 }
@@ -685,6 +886,21 @@ void SilverPhaseEditor::timerCallback()
     an.setFreeze (readParam (proc, ParamIDs::freeze) > 0.5f);
     an.process();
 
+    auto& ao = proc.analyzerOut;
+    ao.setBandsPerOctave ((int) readParam (proc, ParamIDs::resolution) == 1 ? 6 : 3);
+    ao.setResponseMs (readParam (proc, ParamIDs::response));
+    ao.setFreeze (readParam (proc, ParamIDs::freeze) > 0.5f);
+    ao.process();
+
+    const bool on = proc.isCorrectionActive();
+    const juce::String lat = on ? utf8 ("Latência: ") + juce::String (juce::roundToInt (1000.0 * PhaseCorrector::getLatencySamples()
+                                                                       / juce::jmax (1.0, proc.getSampleRate())))
+                                  + utf8 (" ms (compensada pelo REAPER)")
+                                : utf8 ("Desligada: sem latência");
+    if (latencyLabel.getText() != lat)
+        latencyLabel.setText (lat, juce::dontSendNotification);
+    corrStrip.repaint();
+
     const int listenMode = (int) readParam (proc, ParamIDs::listen);
     const juce::String bandText = listenMode == 0
         ? utf8 ("Clique numa banda do gráfico para ouvi-la")
@@ -731,7 +947,7 @@ void SilverPhaseEditor::paint (juce::Graphics& g)
     g.drawHorizontalLine (57, 12.0f, b.getRight() - 12.0f);
 
     // paineis da lateral
-    for (auto panel : { meterPanel, controlsPanel, listPanel })
+    for (auto panel : { meterPanel, controlsPanel, listPanel, corrPanel })
     {
         auto pr = panel.toFloat();
         g.setColour (juce::Colours::white.withAlpha (0.35f));
@@ -744,7 +960,7 @@ void SilverPhaseEditor::paint (juce::Graphics& g)
     g.setColour (navySoft);
     g.setFont (font (11.0f));
     g.drawText (utf8 ("Barra = correlação atual   •   traço laranja = pior valor desde o Limpar   •   "
-                      "Mono + Banda L/R: ouça a banda cancelar"),
+                      "duplo clique: sair da escuta   •   Delta: ouvir só o que a correção remove"),
                 b.withTop (b.getBottom() - 24.0f).reduced (18.0f, 0.0f), juce::Justification::centredLeft);
 }
 
@@ -754,12 +970,17 @@ void SilverPhaseEditor::resized()
     area.removeFromTop (50);
     area.removeFromBottom (18);
 
+    corrPanel = area.removeFromBottom (140);
+    area.removeFromBottom (10);
+
     sidebarArea = area.removeFromRight (290);
     area.removeFromRight (12);
 
-    const int corrH = juce::roundToInt ((float) area.getHeight() * 0.62f);
+    const int corrH = juce::roundToInt ((float) area.getHeight() * 0.55f);
     corrDisplay.setBounds (area.removeFromTop (corrH));
     area.removeFromTop (10);
+    corrStrip.setBounds (area.removeFromTop (78));
+    area.removeFromTop (8);
     specDisplay.setBounds (area);
 
     auto side = sidebarArea;
@@ -795,4 +1016,36 @@ void SilverPhaseEditor::resized()
     bandLabel.setBounds (c.removeFromTop (20));
 
     problemList.setBounds (listPanel.reduced (12, 8));
+
+    // ---- painel de correcao ----
+    auto cp = corrPanel.reduced (14, 10);
+    {
+        auto left = cp.removeFromLeft (250);
+        corrButton.setBounds (left.removeFromTop (36).withWidth (200));
+        left.removeFromTop (10);
+        auto row = left.removeFromTop (26);
+        corrModeLabel.setBounds (row.removeFromLeft (46));
+        corrModeBox.setBounds (row.withWidth (154));
+        left.removeFromTop (6);
+        latencyLabel.setBounds (left.removeFromTop (22));
+    }
+    {
+        auto right = cp.removeFromRight (150);
+        right.removeFromTop (8);
+        bassMonoButton.setBounds (right.removeFromTop (32));
+        right.removeFromTop (12);
+        deltaButton.setBounds (right.removeFromTop (32));
+        cp.removeFromRight (14);
+    }
+    {
+        juce::Slider* ks[] = { &targetKnob, &strengthKnob, &maxRotKnob, &maxSideKnob, &speedKnob, &bassFreqKnob };
+        juce::Label*  ls[] = { &targetLbl,  &strengthLbl,  &maxRotLbl,  &maxSideLbl,  &speedLbl,  &bassFreqLbl };
+        const int colW = cp.getWidth() / 6;
+        for (int i = 0; i < 6; ++i)
+        {
+            auto col = cp.removeFromLeft (colW);
+            ls[i]->setBounds (col.removeFromTop (18));
+            ks[i]->setBounds (col.withSizeKeepingCentre (juce::jmin (colW, 96), col.getHeight()));
+        }
+    }
 }

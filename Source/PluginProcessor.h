@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "CorrelationAnalyzer.h"
+#include "PhaseCorrector.h"
 
 namespace ParamIDs
 {
@@ -12,6 +13,18 @@ namespace ParamIDs
     inline constexpr const char* response   = "response";
     inline constexpr const char* threshold  = "threshold";
     inline constexpr const char* freeze     = "freeze";
+
+    // secao de correcao
+    inline constexpr const char* corrOn       = "corrOn";
+    inline constexpr const char* corrMode     = "corrMode";
+    inline constexpr const char* corrTarget   = "corrTarget";
+    inline constexpr const char* corrStrength = "corrStrength";
+    inline constexpr const char* corrMaxRot   = "corrMaxRot";
+    inline constexpr const char* corrMaxSide  = "corrMaxSide";
+    inline constexpr const char* corrSpeed    = "corrSpeed";
+    inline constexpr const char* corrBassMono = "corrBassMono";
+    inline constexpr const char* corrBassFreq = "corrBassFreq";
+    inline constexpr const char* corrDelta    = "corrDelta";
 }
 
 // Biquad simples (TDF-II, double) para o "ouvir banda"
@@ -73,7 +86,11 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState apvts;
-    CorrelationAnalyzer analyzer;
+    CorrelationAnalyzer analyzer;      // entrada (antes)
+    CorrelationAnalyzer analyzerOut;   // saida da correcao (depois)
+    PhaseCorrector corrector;
+
+    bool isCorrectionActive() const noexcept { return correctionActive.load(); }
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     static double qForResolution (int resolutionIndex) noexcept;
@@ -89,7 +106,10 @@ private:
     int lastListenMode = 0;
     double sr = 44100.0;
 
-    juce::AudioBuffer<float> monoScratch;
+    std::atomic<bool> correctionActive { false };
+    bool wasCorrecting = false;
+
+    std::atomic<float>* cp[10] {};    // parametros da correcao
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SilverPhaseProcessor)
 };

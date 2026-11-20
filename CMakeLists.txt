@@ -39,6 +39,7 @@ target_sources(SilverPhase PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/CorrelationAnalyzer.cpp
+    Source/PhaseCorrector.cpp
 )
 
 target_include_directories(SilverPhase PRIVATE Source)
